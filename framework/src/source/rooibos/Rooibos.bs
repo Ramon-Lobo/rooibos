@@ -85,9 +85,56 @@ namespace rooibos
         if type(seed) <> "roAssociativeArray" then
             return
         end if
-        scene.addFields(seed)
-        for each key in seed
-            scene.setField(key, seed[key])
+        ' The seed is node-keyed: top-level keys are @SGNode type names, plus "*" for defaults applied
+        ' to every suite. Values are { fieldName: value } maps. Stash it on the scene so runNodeTest
+        ' can apply the right slice per node suite (see internal_applyGlobalFieldsForNode).
+        scene.addFields({ "__rooibosGlobalSeed": seed })
+        ' Apply the "*" defaults now for the initial scene state and any non-node (plain) suites.
+        rooibos.internal_applyGlobalFieldsForNode(scene, invalid)
+    end function
+
+    ' @ignore
+    ' Applies the global-field seed slice for a given @SGNode type to the test scene: the "*" defaults
+    ' first (so each suite starts from the same baseline — declare a field as null there to reset it),
+    ' then the per-node overrides. Call before creating each node suite so a bare widget's
+    ' getGlobalField(x) (which reads scene.getField(x)) returns that suite's intended context instead
+    ' of leaking the previous suite's. nodeName = invalid applies only the defaults.
+    function internal_applyGlobalFieldsForNode(scene as object, nodeName as dynamic) as void
+        seed = scene.getField("__rooibosGlobalSeed")
+        if type(seed) <> "roAssociativeArray" then
+            return
+        end if
+        rooibos.internal_applyFieldSet(scene, seed["*"])
+        if nodeName <> invalid and type(seed[nodeName]) = "roAssociativeArray" then
+            rooibos.internal_applyFieldSet(scene, seed[nodeName])
+        end if
+    end function
+
+    ' @ignore
+    ' Sets each { field: value } on the scene, creating the field (type inferred from the value) if it
+    ' does not exist yet. A JSON null seeds the field as invalid (the way to opt a suite OUT of a
+    ' default that another suite needs).
+    function internal_applyFieldSet(scene as object, fields as dynamic) as void
+        if type(fields) <> "roAssociativeArray" then
+            return
+        end if
+        for each f in fields
+            value = fields[f]
+            if not scene.hasField(f) then
+                fieldType = "assocarray"
+                valueType = type(value)
+                if valueType = "roString" or valueType = "String" then
+                    fieldType = "string"
+                else if valueType = "roBoolean" or valueType = "Boolean" then
+                    fieldType = "boolean"
+                else if valueType = "roArray" then
+                    fieldType = "array"
+                else if valueType = "roInt" or valueType = "Integer" or valueType = "roFloat" or valueType = "Float" or valueType = "Double" then
+                    fieldType = "float"
+                end if
+                scene.addField(f, fieldType, false)
+            end if
+            scene.setField(f, value)
         end for
     end function
 
