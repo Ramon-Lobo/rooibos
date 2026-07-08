@@ -21,7 +21,8 @@ export enum AnnotationType {
     Async = 'async',
     Tags = 'tags',
     NoCatch = 'nocatch',
-    NoEarlyExit = 'noearlyexit'
+    NoEarlyExit = 'noearlyexit',
+    DeviceOnly = 'deviceonly'
 }
 
 let annotationLookup = {
@@ -42,7 +43,8 @@ let annotationLookup = {
     async: AnnotationType.Async,
     tags: AnnotationType.Tags,
     nocatch: AnnotationType.NoCatch,
-    noearlyexit: AnnotationType.NoEarlyExit
+    noearlyexit: AnnotationType.NoEarlyExit,
+    deviceonly: AnnotationType.DeviceOnly
 };
 
 interface ParsedComment {
@@ -156,6 +158,14 @@ export class RooibosAnnotation {
 
                 for (const annotation of getAnnotationsOfType(AnnotationType.Tags)) {
                     tags = annotation.getArguments().map((a) => a?.toString());
+                }
+
+                // `@deviceOnly` is sugar for the built-in `deviceOnly` tag. It carries no arguments and
+                // marks a suite/group/test that only makes sense on hardware; the headless lanes exclude
+                // the `deviceOnly` tag (via the runner's `tags: ['!deviceOnly']`) while the device lane
+                // keeps it. Merge it into the tag set so the existing include/exclude machinery applies.
+                if (getAnnotationsOfType(AnnotationType.DeviceOnly).length > 0 && !tags.includes('deviceOnly')) {
+                    tags = [...tags, 'deviceOnly'];
                 }
 
 
