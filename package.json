@@ -9,7 +9,7 @@
         "lint": "eslint \"src/**\"",
         "ropm": "ropm install",
         "copy-framework-files": "cp -r ./framework/src ./dist/lib/framework",
-        "build": "ropm copy && npm run compile && npm run copy-framework-files",
+        "build": "ropm copy && node scripts/apply-roku-test-overrides.js && npm run compile && npm run copy-framework-files",
         "build-test-project": "bsc --cwd test-project --project bsconfig.json",
         "docs": "jsdoc -c jsdoc.json -d .tmp/docs --verbose",
         "test": "nyc mocha",

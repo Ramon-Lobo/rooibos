@@ -37,6 +37,11 @@ let options = yargs
 
 async function main() {
     let currentErrorCode = 0;
+    // Ignore the `app-exit` that fires when a PREVIOUSLY-running dev channel is torn down during
+    // sideload (roku-deploy publish). Without this, back-to-back runs quit before the freshly
+    // launched test channel emits results. Armed shortly after deploy so a genuine post-launch
+    // crash still triggers exit. [Rooibos Shutdown] remains the primary completion signal.
+    let armAppExit = false;
     let bsconfigPath = options.project ?? 'bsconfig.json';
     console.log(`Using bsconfig: ${bsconfigPath}`);
 
@@ -66,7 +71,29 @@ async function main() {
     const failRegex = /\[Rooibos Result\]: (FAIL|PASS)/g;
     const endRegex = /\[Rooibos Shutdown\]/g;
 
+    // Inactivity watchdog: if the device emits no output for IDLE_MS the run has stalled (a fatal
+    // crash or a hang), so finish with whatever results were captured rather than waiting for the
+    // outer process timeout. Reset on every console line; armed after deploy.
+    const IDLE_MS = 90000;
+    let idleTimer: NodeJS.Timeout | null = null;
+    function bumpIdle() {
+        if (idleTimer) {
+            clearTimeout(idleTimer);
+        }
+        idleTimer = setTimeout(() => {
+            console.error(`[roku-test] no device output for ${IDLE_MS / 1000}s — run stalled; finishing with results captured so far.`);
+            if (!currentErrorCode) {
+                currentErrorCode = 1;
+            }
+            doExit(true).catch(e => { console.error(e); process.exit(1); });
+        }, IDLE_MS);
+    }
+
     async function doExit(emitAppExit = false) {
+        if (idleTimer) {
+            clearTimeout(idleTimer);
+            idleTimer = null;
+        }
         if (emitAppExit) {
             (telnet as any).beginAppExit();
         }
@@ -75,6 +102,7 @@ async function main() {
     }
 
     telnet.on('console-output', (output) => {
+        bumpIdle();
         console.log(output);
 
         //check for Fails or Crashes
@@ -97,13 +125,16 @@ async function main() {
     telnet.on('runtime-error', (error) => {
         console.error(`Runtime Error: ${error.errorCode} - ${error.message}`);
         currentErrorCode = 1;
-        doExit(true).catch(e => {
-            console.error(e);
-            process.exit(1);
-        });
+        // Fail-safe: do NOT exit the whole run on a runtime error. Rooibos on-device catches a
+        // crashing suite and moves on, so one device pass can cover every suite (crashes reported
+        // inline) instead of halting at the first crash. The run still ends on [Rooibos Shutdown],
+        // or on a genuine app-exit (armed after deploy) if a crash actually brings the channel down.
     });
 
     telnet.on('app-exit', () => {
+        if (!armAppExit) {
+            return;
+        }
         doExit(false).catch(e => {
             console.error(e);
             process.exit(1);
@@ -125,6 +156,9 @@ async function main() {
     }
 
     await deployBuiltFiles();
+    bumpIdle();
+    // The old instance's teardown app-exit has fired by now; arm the fallback for real crashes.
+    setTimeout(() => { armAppExit = true; }, 8000);
 }
 
 main().catch(e => {
