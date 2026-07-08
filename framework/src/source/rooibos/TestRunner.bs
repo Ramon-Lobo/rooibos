@@ -132,7 +132,7 @@ namespace rooibos
             end if
         end function
 
-        public function runInNodeMode(nodeTestName as string) as void
+        public function runInNodeMode(nodeTestName as string) as dynamic
             suiteClass = m.runtimeConfig.getTestSuiteClassWithName(nodeTestName)
             testSuite = invalid
 
@@ -155,14 +155,20 @@ namespace rooibos
                 testSuite.testRunner = m
                 rooibos.common.logDebug("Running suite as a Node test!")
                 testSuite.run()
-                return
+                ' [roku-test patch] Return the result so the generated node publishes it via
+                ' rooibosTestResult. With the promises patch, run() settles synchronously, so testSuiteDone
+                ' has already set the result on the node; returning it here prevents the generated
+                ' component's assignment from overwriting it with the void return value.
+                return { stats: testSuite.stats, tests: testSuite.tests, groups: testSuite.groups }
             else
                 rooibos.common.logError(`Could not create test suite ${nodeTestName}`)
             end if
 
             rooibos.common.logError(`(runInNodeMode) executing node test ${nodeTestName} was unsuccessful.`)
 
-            return
+            ' [roku-test patch] must return a value now that the signature is `as dynamic`
+            ' (the Roku device compiler rejects a bare `return` on a non-void function).
+            return invalid
         end function
 
         private function onTestSuiteComplete() as roAssociativeArray
