@@ -24,6 +24,13 @@ namespace rooibos
             "_rbs_ccn": createObject("roSGNode", "CodeCoverage")
         })
 
+        ' Seed test-scene fields from an optional pkg:/rooibos_global_seed.json (written by the test
+        ' harness). A bare @SGNode widget's getGlobalField(...) reads scene.getField(...), so without
+        ' the real app's globals those reads return invalid and the widget crashes on device while
+        ' constructing. Seeding e.g. an empty config/user AA lets it construct like it would in-app.
+        ' Runs before any test node is created. No file → no-op.
+        rooibos.internal_seedGlobalFields(scene)
+
         if scene.hasField("isReadyToStartTests") and scene.isReadyToStartTests = false then
             rooibos.common.logInfo("The scene is not ready yet - waiting for it to set isReadyToStartTests to true")
             scene.observeField("isReadyToStartTests", m.port)
@@ -62,6 +69,26 @@ namespace rooibos
                 end if
             end if
         end while
+    end function
+
+    ' @ignore
+    ' Seeds fields on the test scene from pkg:/rooibos_global_seed.json (a JSON object of field ->
+    ' value, written by the harness — e.g. roku-test's `globalFields` config). Lets @SGNode widgets
+    ' that read global context via the scene (getGlobalField -> scene.getField) construct without
+    ' hitting invalid on device. Safe no-op when the file is absent or malformed.
+    function internal_seedGlobalFields(scene as object) as void
+        raw = ReadAsciiFile("pkg:/rooibos_global_seed.json")
+        if raw = invalid or raw = "" then
+            return
+        end if
+        seed = ParseJson(raw)
+        if type(seed) <> "roAssociativeArray" then
+            return
+        end if
+        scene.addFields(seed)
+        for each key in seed
+            scene.setField(key, seed[key])
+        end for
     end function
 
     ' @ignore
