@@ -17,6 +17,11 @@ namespace rooibos
         private runtimeConfig = invalid
         private stats = invalid
         private top = invalid
+        ' A single persistent, invisible container that hosts every @SGNode test node. Test nodes are
+        ' created inside it instead of directly on the scene, so (1) the scene's live child list stops
+        ' churning once per suite (no full-scene re-layout on each create/remove) and (2) the invisible
+        ' subtree is skipped by the render pass — a large saving across a suite with many node tests.
+        private testNodeContainer = invalid
 
         public function new(testScene as roSGNodeRooibosScene, nodeContext as roAssociativeArray)
             m.testScene = testScene
@@ -233,8 +238,16 @@ namespace rooibos
                 ' creating the node, so the widget's init reads its intended global context. See
                 ' rooibos.internal_applyGlobalFieldsForNode.
                 rooibos.internal_applyGlobalFieldsForNode(m.testScene, testSuite.nodeName)
+                ' Host test nodes inside a single persistent invisible container rather than directly on
+                ' the scene, so the scene isn't re-laid-out on every suite and the test subtree never
+                ' renders. Created lazily on first node test. getScene()/m.global still resolve up to the
+                ' scene through the container, so global-field seeding is unaffected.
+                if m.testNodeContainer = invalid then
+                    m.testNodeContainer = m.testScene.CreateChild("Group")
+                    m.testNodeContainer.visible = false
+                end if
                 nodeCreator = CreateObject("roSGNode", "RooibosNodeCreator")
-                node = nodeCreator@.CreateNode(testSuite.generatedNodeName, m.testScene)
+                node = nodeCreator@.CreateNode(testSuite.generatedNodeName, m.testNodeContainer)
                 port = CreateObject("roMessagePort")
                 node.observeField("rooibosTestResult", port)
                 ' Trigger test via observer so that thread ownership
@@ -264,7 +277,7 @@ namespace rooibos
                     else
                         rooibos.common.logError(`The node test ${testSuite.name} did not indicate test completion. Did you call m.done() in your test? Did you correctly configure your node test? Please refer to : https://github.com/rokucommunity/rooibos/blob/master/docs/index.md#testing-scenegraph-nodes`)
                     end if
-                    m.testScene.removeChild(node)
+                    m.testNodeContainer.removeChild(node)
                     return
 
                 else
