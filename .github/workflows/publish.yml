@@ -1,0 +1,28 @@
+name: publish
+
+# Publishes @ramon-lobo/rooibos-roku to npm. Self-contained (does not use the
+# rokucommunity org's reusable workflows / bot). Requires an NPM_TOKEN repo secret
+# with publish rights to the @ramon-lobo scope.
+#
+# Trigger by pushing a tag (v5.16.4, v5.16.5, …) or running the workflow manually.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18.20.4"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci
+      # prepublishOnly runs `npm run build` (ropm copy + overrides + compile + framework copy),
+      # so the published dist is always freshly built from source.
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
