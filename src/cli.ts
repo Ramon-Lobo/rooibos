@@ -85,7 +85,10 @@ async function main() {
             if (!currentErrorCode) {
                 currentErrorCode = 1;
             }
-            doExit(true).catch(e => { console.error(e); process.exit(1); });
+            doExit(true).catch(e => {
+                console.error(e);
+                process.exit(1);
+            });
         }, IDLE_MS);
     }
 
@@ -158,7 +161,9 @@ async function main() {
     await deployBuiltFiles();
     bumpIdle();
     // The old instance's teardown app-exit has fired by now; arm the fallback for real crashes.
-    setTimeout(() => { armAppExit = true; }, 8000);
+    setTimeout(() => {
+        armAppExit = true;
+    }, 8000);
 }
 
 main().catch(e => {
