@@ -1,8 +1,8 @@
 name: publish
 
-# Publishes @ramon-lobo/rooibos-roku to npm. Self-contained (does not use the
+# Publishes @ramonlobo/rooibos-roku to npm. Self-contained (does not use the
 # rokucommunity org's reusable workflows / bot). Requires an NPM_TOKEN repo secret
-# with publish rights to the @ramon-lobo scope.
+# with publish rights to the @ramonlobo scope.
 #
 # Trigger by pushing a tag (v5.16.4, v5.16.5, …) or running the workflow manually.
 on:
