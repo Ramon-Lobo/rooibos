@@ -3,13 +3,12 @@
     // why each allowlisted entry is safe to defer.
     "$schema": "https://github.com/IBM/audit-ci/raw/main/docs/schema.json",
     "high": true,
-    "allowlist": [
-        {
-            "GHSA-w5hq-g745-h8pq": {
-                // Added: 2026-05-22
-                "active": true,
-                "notes": "`uuid` <11.1.1 (via `postman-request` and dev-only `nyc>istanbul-lib-processinfo`): vulnerable code path is `v3()`/`v5()`/`v6()` when a caller-provided buffer is passed. All consumers in this dep graph call only `v4()` (no buffer arg), so the vulnerable path is unreachable."
-            }
-        }
-    ]
+    // Empty on purpose. GHSA-w5hq-g745-h8pq (`uuid` <11.1.1, via `postman-request` and dev-only
+    // `nyc>istanbul-lib-processinfo`) used to be listed here, but it is rated *moderate* and
+    // `"high": true` never evaluates moderates — so the entry was inert and audit-ci printed
+    // "Consider not allowlisting advisory: GHSA-w5hq-g745-h8pq" on every run. Its reasoning is kept
+    // for the record: the vulnerable path is `v3()`/`v5()`/`v6()` with a caller-provided buffer, and
+    // every consumer in this dep graph calls only `v4()` (no buffer arg), so it is unreachable.
+    // If uuid is ever re-rated to high, that should surface as a fresh review, not a pre-approval.
+    "allowlist": []
 }
