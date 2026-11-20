@@ -1,0 +1,33 @@
+name: bt-publish
+
+# Owner-triggered only. Stamps the version (<upstream>-bt.<N>) and publishes with provenance.
+on:
+  workflow_dispatch:
+    inputs:
+      n:
+        description: "bt build number N"
+        required: true
+      tag:
+        description: "npm dist-tag"
+        required: true
+        default: "bt-next"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18.20.4"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci
+      - run: node scripts/bt-stamp.js ${{ inputs.n }}
+      # prepublishOnly runs `npm run build`
+      - run: npm publish --provenance --access public --tag ${{ inputs.tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
