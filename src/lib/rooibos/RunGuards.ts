@@ -9,6 +9,8 @@ export interface RunGuardsOptions {
     /** ROO-02: seconds of device silence after which the run is finished. Undefined or <= 0 = no watchdog. */
     idleTimeoutSec?: number;
     /** ROO-02: called when the watchdog fires. */
+    /** ROO-03: do not end the run on a runtime error; the run still fails, but later suites keep running. */
+    continueOnRuntimeError?: boolean;
     onIdle?: (message: string) => void;
 }
 
@@ -65,6 +67,11 @@ export class RunGuards {
             return { exit: true, failure: '[rooibos] the app exited without a [Rooibos Result] line - failing the run' };
         }
         return { exit: true };
+    }
+
+    /** Call on a device runtime error. Returns true when the CLI should end the run now (stock behaviour). */
+    public onRuntimeError(): boolean {
+        return !this.options.continueOnRuntimeError;
     }
 
     private bumpIdle() {
