@@ -66,6 +66,36 @@ describe('RunGuards', () => {
         });
     });
 
+    describe('--app-exit-grace pending exit', () => {
+        it('fails the run when the grace expires with a swallowed app-exit and no result line', async () => {
+            const failures: string[] = [];
+            guards = new RunGuards({ appExitGraceMs: 30, onDeferredExit: f => failures.push(f) });
+            guards.deployed();
+            expect(guards.onAppExit().exit).to.be.false;
+            await wait(80);
+            expect(failures).to.have.length(1);
+            expect(failures[0]).to.include('without a [Rooibos Result]');
+        });
+
+        it('does nothing at expiry when a result line was seen', async () => {
+            const failures: string[] = [];
+            guards = new RunGuards({ appExitGraceMs: 30, onDeferredExit: f => failures.push(f) });
+            guards.deployed();
+            guards.onAppExit();
+            guards.onOutput('[Rooibos Result]: PASS');
+            await wait(80);
+            expect(failures).to.eql([]);
+        });
+
+        it('does nothing at expiry when no exit was swallowed', async () => {
+            const failures: string[] = [];
+            guards = new RunGuards({ appExitGraceMs: 20, onDeferredExit: f => failures.push(f) });
+            guards.deployed();
+            await wait(60);
+            expect(failures).to.eql([]);
+        });
+    });
+
     describe('--idle-timeout (ROO-02)', () => {
         it('fires after the idle period, once', async () => {
             const messages: string[] = [];
@@ -115,6 +145,55 @@ describe('RunGuards', () => {
         it('does not end the run on a runtime error', () => {
             guards = new RunGuards({ continueOnRuntimeError: true });
             expect(guards.onRuntimeError()).to.be.false;
+        });
+
+        it('fails fast when the debugger reports it cannot continue', () => {
+            const messages: string[] = [];
+            guards = new RunGuards({ continueOnRuntimeError: true, onIdle: m => messages.push(m) });
+            guards.onRuntimeError();
+            guards.onCannotContinue();
+            expect(messages).to.have.length(1);
+            expect(messages[0]).to.include('catchCrashes');
+        });
+
+        it('fails fast when the app stays at the debugger prompt after continue was sent', async () => {
+            const messages: string[] = [];
+            guards = new RunGuards({ continueOnRuntimeError: true, resumeWaitMs: 30, onIdle: m => messages.push(m) });
+            guards.deployed();
+            guards.onRuntimeError();
+            guards.onResumeSent();
+            guards.onOutput('Brightscript Debugger> ');
+            await wait(80);
+            expect(messages).to.have.length(1);
+            expect(messages[0]).to.include('debugger');
+        });
+
+        it('keeps going when real output follows the continue', async () => {
+            const messages: string[] = [];
+            guards = new RunGuards({ continueOnRuntimeError: true, resumeWaitMs: 30, onIdle: m => messages.push(m) });
+            guards.deployed();
+            guards.onRuntimeError();
+            guards.onResumeSent();
+            guards.onOutput('some suite output');
+            await wait(80);
+            expect(messages).to.eql([]);
+        });
+
+        it('suspend with a guard flag on and no resume fails fast; flags off do nothing', async () => {
+            const messages: string[] = [];
+            guards = new RunGuards({ idleTimeoutSec: 60, resumeWaitMs: 20, onIdle: m => messages.push(m) });
+            guards.deployed();
+            guards.onSuspend();
+            await wait(60);
+            expect(messages).to.have.length(1);
+            guards.dispose();
+            const off: string[] = [];
+            guards = new RunGuards({ resumeWaitMs: 20, onIdle: m => off.push(m) });
+            guards.deployed();
+            guards.onSuspend();
+            guards.onCannotContinue();
+            await wait(60);
+            expect(off).to.eql([]);
         });
     });
 });

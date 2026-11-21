@@ -224,6 +224,14 @@ async function main() {
         appExitGraceMs: options['app-exit-grace'],
         idleTimeoutSec: options['idle-timeout'],
         continueOnRuntimeError: options['continue-on-runtime-error'],
+        onDeferredExit: (failure) => {
+            console.error(failure);
+            currentErrorCode = 1;
+            doExit(false).catch(e => {
+                console.error(e);
+                process.exit(1);
+            });
+        },
         onIdle: (message) => {
             console.error(message);
             currentErrorCode = 1;
@@ -286,6 +294,9 @@ async function main() {
         console.error(`Runtime Error: ${error.errorCode} - ${error.message}`);
         currentErrorCode = 1;
         if (!guards.onRuntimeError()) {
+            //--continue-on-runtime-error: try to resume; guards bounds a debugger that stays stuck
+            Promise.resolve(telnet.continue()).catch(e => console.error(e));
+            guards.onResumeSent();
             return;
         }
         doExit(true).catch(e => {
@@ -293,6 +304,9 @@ async function main() {
             process.exit(1);
         });
     });
+
+    telnet.on('suspend', () => guards.onSuspend());
+    telnet.on('cannot-continue', () => guards.onCannotContinue());
 
     telnet.on('app-exit', () => {
         const decision = guards.onAppExit();
