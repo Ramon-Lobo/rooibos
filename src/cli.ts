@@ -60,6 +60,7 @@ let options = yargs
     .option('staging-dir', { type: 'string', description: 'Path to the built package directory (staging output). With --no-build this is zipped and deployed as-is; otherwise it overrides where the build stages. Coverage models are read from here.' })
     .option('app-exit-grace', { type: 'number', description: 'Opt in to guarding against a premature app-exit: ignore app-exit events for this many milliseconds after deploy (the teardown of a previously running channel), and after that treat an app-exit that came without a [Rooibos Result] line as a failure. Off by default.' })
     .option('idle-timeout', { type: 'number', description: 'Opt in to an idle watchdog: if the device prints nothing for this many seconds after deploy, fail the run with the results captured so far. Off by default (no watchdog).' })
+    .option('continue-on-runtime-error', { type: 'boolean', default: false, description: 'Opt in to keeping the run going after a device runtime error instead of exiting at the first one. The run is still reported as failed (exit code 1) and ends on [Rooibos Shutdown], an app-exit or --idle-timeout. Off by default.' })
     .option('build', { type: 'boolean', default: true, description: 'Pass --no-build to skip the internal bsc build and deploy an existing staging directory (from --staging-dir or the bsconfig). Assumes it was built with the rooibos plugin so coverage helpers are present.' })
     .check((argv) => {
         password = argv.password ?? process.env.ROKU_PASSWORD;
@@ -222,6 +223,7 @@ async function main() {
     const guards = new RunGuards({
         appExitGraceMs: options['app-exit-grace'],
         idleTimeoutSec: options['idle-timeout'],
+        continueOnRuntimeError: options['continue-on-runtime-error'],
         onIdle: (message) => {
             console.error(message);
             currentErrorCode = 1;
@@ -283,6 +285,9 @@ async function main() {
     telnet.on('runtime-error', (error) => {
         console.error(`Runtime Error: ${error.errorCode} - ${error.message}`);
         currentErrorCode = 1;
+        if (!guards.onRuntimeError()) {
+            return;
+        }
         doExit(true).catch(e => {
             console.error(e);
             process.exit(1);
