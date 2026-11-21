@@ -6,6 +6,10 @@
 export interface RunGuardsOptions {
     /** ROO-01: ms after deploy during which an `app-exit` is ignored. Undefined = stock (never ignored). */
     appExitGraceMs?: number;
+    /** ROO-02: seconds of device silence after which the run is finished. Undefined or <= 0 = no watchdog. */
+    idleTimeoutSec?: number;
+    /** ROO-02: called when the watchdog fires. */
+    onIdle?: (message: string) => void;
 }
 
 export interface AppExitDecision {
@@ -21,6 +25,8 @@ export class RunGuards {
     private appExitArmed: boolean;
     private resultSeen = false;
     private timers: NodeJS.Timeout[] = [];
+    private idleTimer: NodeJS.Timeout | undefined;
+    private deployDone = false;
 
     constructor(private options: RunGuardsOptions = {}) {
         //stock: the app-exit is honoured immediately
@@ -29,6 +35,8 @@ export class RunGuards {
 
     /** Call once the package has been sideloaded. */
     public deployed() {
+        this.deployDone = true;
+        this.bumpIdle();
         if (this.options.appExitGraceMs !== undefined) {
             this.timers.push(setTimeout(() => {
                 this.appExitArmed = true;
@@ -38,6 +46,7 @@ export class RunGuards {
 
     /** Call for every chunk of device console output. */
     public onOutput(output: string) {
+        this.bumpIdle();
         if (RESULT_REGEX.test(output)) {
             this.resultSeen = true;
         }
@@ -58,7 +67,25 @@ export class RunGuards {
         return { exit: true };
     }
 
+    private bumpIdle() {
+        const seconds = this.options.idleTimeoutSec;
+        if (!seconds || seconds <= 0 || !this.deployDone) {
+            return;
+        }
+        if (this.idleTimer) {
+            clearTimeout(this.idleTimer);
+        }
+        this.idleTimer = setTimeout(() => {
+            this.idleTimer = undefined;
+            this.options.onIdle?.(`[rooibos] no device output for ${seconds}s - run stalled; finishing with the results captured so far`);
+        }, seconds * 1000);
+    }
+
     public dispose() {
+        if (this.idleTimer) {
+            clearTimeout(this.idleTimer);
+            this.idleTimer = undefined;
+        }
         for (const timer of this.timers) {
             clearTimeout(timer);
         }

@@ -59,6 +59,7 @@ let options = yargs
     .option('code-coverage', { type: 'boolean', description: 'Turn code coverage on (or off with --no-code-coverage) for the CLI\'s build, overriding the rooibos block of the bsconfig. Has no effect with --no-build.' })
     .option('staging-dir', { type: 'string', description: 'Path to the built package directory (staging output). With --no-build this is zipped and deployed as-is; otherwise it overrides where the build stages. Coverage models are read from here.' })
     .option('app-exit-grace', { type: 'number', description: 'Opt in to guarding against a premature app-exit: ignore app-exit events for this many milliseconds after deploy (the teardown of a previously running channel), and after that treat an app-exit that came without a [Rooibos Result] line as a failure. Off by default.' })
+    .option('idle-timeout', { type: 'number', description: 'Opt in to an idle watchdog: if the device prints nothing for this many seconds after deploy, fail the run with the results captured so far. Off by default (no watchdog).' })
     .option('build', { type: 'boolean', default: true, description: 'Pass --no-build to skip the internal bsc build and deploy an existing staging directory (from --staging-dir or the bsconfig). Assumes it was built with the rooibos plugin so coverage helpers are present.' })
     .check((argv) => {
         password = argv.password ?? process.env.ROKU_PASSWORD;
@@ -218,7 +219,18 @@ async function main() {
         });
     }
 
-    const guards = new RunGuards({ appExitGraceMs: options['app-exit-grace'] });
+    const guards = new RunGuards({
+        appExitGraceMs: options['app-exit-grace'],
+        idleTimeoutSec: options['idle-timeout'],
+        onIdle: (message) => {
+            console.error(message);
+            currentErrorCode = 1;
+            doExit(true).catch(e => {
+                console.error(e);
+                process.exit(1);
+            });
+        }
+    });
 
     async function doExit(emitAppExit = false) {
         guards.dispose();
