@@ -28,6 +28,14 @@ export interface AppExitDecision {
 const APP_EXIT_FAILURE = '[rooibos] the app exited without a [Rooibos Result] line - failing the run';
 const PROMPT_REGEX = /Brightscript Debugger>|can't continue/i;
 const RESULT_REGEX = /\[Rooibos Result\]: (FAIL|PASS)/;
+//periodic memory/cpu heartbeat some firmware prints about once a second, e.g. `channel: mem=19540KiB{...},%cpu=0{...}`
+const HEARTBEAT_REGEX = /^channel: mem=/;
+
+/** True when every non-blank line of the chunk is a memory heartbeat (so the chunk is not proof of progress). */
+function isHeartbeatOnly(output: string): boolean {
+    const lines = output.split(/\r?\n/).filter(line => line.trim() !== '');
+    return lines.length > 0 && lines.every(line => HEARTBEAT_REGEX.test(line));
+}
 
 export class RunGuards {
     private appExitArmed: boolean;
@@ -61,7 +69,10 @@ export class RunGuards {
 
     /** Call for every chunk of device console output. */
     public onOutput(output: string) {
-        this.bumpIdle();
+        //a memory heartbeat is the device being alive, not the tests progressing: it must not reset the idle watchdog
+        if (!isHeartbeatOnly(output)) {
+            this.bumpIdle();
+        }
         if (RESULT_REGEX.test(output)) {
             this.resultSeen = true;
         }

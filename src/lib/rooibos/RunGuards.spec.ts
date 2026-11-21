@@ -31,6 +31,17 @@ describe('RunGuards', () => {
             await wait(60);
             expect(fired).to.be.false;
         });
+
+        it('heartbeat lines are harmless without the flag', async () => {
+            let fired = false;
+            guards = new RunGuards({ onIdle: () => {
+                fired = true;
+            } });
+            guards.deployed();
+            guards.onOutput('channel: mem=1KiB');
+            await wait(60);
+            expect(fired).to.be.false;
+        });
     });
 
     describe('--app-exit-grace (ROO-01)', () => {
@@ -115,6 +126,33 @@ describe('RunGuards', () => {
             for (let i = 0; i < 4; i++) {
                 await wait(40);
                 guards.onOutput('line');
+            }
+            expect(fired).to.be.false;
+        });
+
+        it('is not reset by channel mem heartbeat lines, so a heartbeat-only stream fires on time', async () => {
+            const messages: string[] = [];
+            guards = new RunGuards({ idleTimeoutSec: 0.08, onIdle: m => messages.push(m) });
+            guards.deployed();
+            for (let i = 0; i < 4; i++) {
+                await wait(30);
+                guards.onOutput('channel: mem=19540KiB{anon=3916,file=15444,shared=180,swap=0},%cpu=0{user=0,sys=0}\n\n');
+            }
+            await wait(20);
+            expect(messages).to.have.length(1);
+            expect(messages[0]).to.include('no device output');
+        });
+
+        it('is reset by a normal output line between heartbeats', async () => {
+            let fired = false;
+            guards = new RunGuards({ idleTimeoutSec: 0.08, onIdle: () => {
+                fired = true;
+            } });
+            guards.deployed();
+            for (let i = 0; i < 4; i++) {
+                await wait(30);
+                guards.onOutput('channel: mem=19540KiB{anon=1},%cpu=0{user=0,sys=0}');
+                guards.onOutput(i % 2 ? 'real test output' : 'channel: mem=1KiB\nreal test output');
             }
             expect(fired).to.be.false;
         });
