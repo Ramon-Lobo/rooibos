@@ -12,6 +12,7 @@ import type { CoverageMap as CoverageModelJson } from './lib/rooibos/CodeCoverag
 import { resolveCliRooibosConfig } from './lib/rooibos/RooibosConfig';
 import { resolveCliDevice } from './lib/rooibos/resolveCliDevice';
 import type { ResolvedCliDevice } from './lib/rooibos/resolveCliDevice';
+import { RunGuards } from './lib/rooibos/RunGuards';
 import { loadCoverageModel, writeCoverageReportsFromCounts } from './lib/rooibos/CoverageReporter';
 
 /**
@@ -57,6 +58,7 @@ let options = yargs
     .option('coverage-dir', { type: 'string', default: './coverage', description: 'Directory to write coverage reports into when codeCoverage is on: lcov.info, coverage-final.json and an html/ report.' })
     .option('code-coverage', { type: 'boolean', description: 'Turn code coverage on (or off with --no-code-coverage) for the CLI\'s build, overriding the rooibos block of the bsconfig. Has no effect with --no-build.' })
     .option('staging-dir', { type: 'string', description: 'Path to the built package directory (staging output). With --no-build this is zipped and deployed as-is; otherwise it overrides where the build stages. Coverage models are read from here.' })
+    .option('app-exit-grace', { type: 'number', description: 'Opt in to guarding against a premature app-exit: ignore app-exit events for this many milliseconds after deploy (the teardown of a previously running channel), and after that treat an app-exit that came without a [Rooibos Result] line as a failure. Off by default.' })
     .option('build', { type: 'boolean', default: true, description: 'Pass --no-build to skip the internal bsc build and deploy an existing staging directory (from --staging-dir or the bsconfig). Assumes it was built with the rooibos plugin so coverage helpers are present.' })
     .check((argv) => {
         password = argv.password ?? process.env.ROKU_PASSWORD;
@@ -216,7 +218,10 @@ async function main() {
         });
     }
 
+    const guards = new RunGuards({ appExitGraceMs: options['app-exit-grace'] });
+
     async function doExit(emitAppExit = false) {
+        guards.dispose();
         // don't kill the process while coverage reports are still being written
         await coverageReportPromise;
         if (emitAppExit) {
@@ -228,6 +233,7 @@ async function main() {
 
     telnet.on('console-output', (output) => {
         console.log(output);
+        guards.onOutput(output);
 
         for (const line of output.split('\n')) {
             if (line.includes('+-=-coverage-counts:start')) {
@@ -272,6 +278,14 @@ async function main() {
     });
 
     telnet.on('app-exit', () => {
+        const decision = guards.onAppExit();
+        if (!decision.exit) {
+            return;
+        }
+        if (decision.failure) {
+            console.error(decision.failure);
+            currentErrorCode = 1;
+        }
         doExit(false).catch(e => {
             console.error(e);
             process.exit(1);
@@ -295,6 +309,7 @@ async function main() {
     }
 
     await deployBuiltFiles();
+    guards.deployed();
 }
 
 main().catch(e => {
