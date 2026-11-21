@@ -40,6 +40,16 @@ npm test
 
 `npx ropm copy` is required because `npm install` alone doesn't copy the ropm modules the framework depends on. `npm run build` also runs it for you, and the test/device scripts will tell you if you've forgotten it.
 
+## Opt-in run guards (rooibos-cli)
+
+These flags are off by default; without them the CLI behaves as stock. A normal run (no runtime error, a result line printed) with any of them set still exits 0.
+
+- `--continue-on-runtime-error`: keep the run going after a device runtime error. The CLI still marks the run failed (exit 1), sends a `continue` to the debugger, and later suites keep running. **Limit:** this only works when the test sets rooibos `catchCrashes: true`. With `catchCrashes: false` the device cannot resume a faulted thread: the run ends with exit 1 and the message "the debugger cannot continue after the runtime error (it only continues with rooibos catchCrashes: true)". If the app stays at the debugger prompt for 5 s after the continue, the run also ends with exit 1 ("no progress ...").
+- `--app-exit-grace <ms>`: app-exit events within `<ms>` of deploy (teardown of a previously running channel) are not acted on, but one is remembered. If no `[Rooibos Result]: PASS|FAIL` line has arrived when the window expires, the run fails with exit 1 ("the app exited without a [Rooibos Result] line"). If a result line was seen, the remembered exit is dropped and the run carries on. An app-exit after the window fails the same way when no result line was seen.
+- `--idle-timeout <s>`: if the device prints nothing for `<s>` seconds after deploy, the run ends with exit 1 and the message "no device output for N s - run stalled; finishing with the results captured so far".
+
+Code: `src/lib/rooibos/RunGuards.ts`, wired in `src/cli.ts`.
+
 ## Sample project
 
 https://github.com/rokucommunity/rooibos-roku-sample
