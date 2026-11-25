@@ -73,9 +73,25 @@ describe('scripts/bt-stamp.js', function () {
         expect(() => stamp()).to.throw(/detached HEAD/);
     });
 
-    it('stamps the real queue with exactly the four flags and the lock version', () => {
+    it('stamps the real queue with exactly the four flags and the lock version', function () {
         // a scratch clone of this repo at HEAD (its history, tag and lock), never the worktree itself
         const repo = path.resolve(__dirname, '../../..');
+        const probe = (...args: string[]) => {
+            try {
+                return execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+            } catch (e) {
+                return undefined;
+            }
+        };
+        if (probe('rev-parse', '--is-shallow-repository') !== 'false') {
+            return this.skip(); // shallow checkout: the upstream tag and history are not available
+        }
+        if (probe('rev-parse', '-q', '--verify', 'refs/tags/v5.17.0') === undefined) {
+            return this.skip(); // upstream tag v5.17.0 is not fetched
+        }
+        if (probe('symbolic-ref', '-q', 'HEAD') === undefined) {
+            return this.skip(); // detached HEAD (e.g. a CI merge ref): no queue branch to stamp
+        }
         const lock = JSON.parse(fs.readFileSync(path.join(repo, 'package-lock.json'), 'utf8'));
         const clone = path.join(dir, 'clone');
         const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
