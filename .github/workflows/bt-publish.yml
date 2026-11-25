@@ -1,0 +1,177 @@
+name: bt-publish
+
+# Stage-only npm release of @ramonlobo/rooibos-roku, owner-triggered (workflow_dispatch only; no tag push, no
+# schedule). `verify` stamps <upstream>-bt.<N>, builds, tests and packs a real tarball (uploaded as a 1-day artifact,
+# sha512 integrity passed as a job output). `stage` runs NO repository code: it downloads that tarball, checks the
+# integrity, and stages exactly that file with `npm stage publish --tag next`. Nothing is live until the owner
+# approves the staged version on npmjs.com (2FA) or with `npm stage approve <stage-id>`. This file must never call
+# `npm publish`. Dist-tag is always `next`, never `latest`.
+#
+# `tag` (v<upstream>-bt.<N>, created once after a green stage, never moved) is part of the pipeline but is run by the
+# owner only. Matches the design of the brighttest release pipeline (stage-only, #372 head 1d94db1); a rebase onto
+# the merged form of that pipeline is pending.
+on:
+  workflow_dispatch:
+    inputs:
+      n:
+        description: "bt build number N (version becomes <upstream>-bt.N)"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: bt-publish
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      integrity: ${{ steps.pack.outputs.integrity }}
+      tarball: ${{ steps.pack.outputs.tarball }}
+      version: ${{ steps.pack.outputs.version }}
+    steps:
+      - name: Check inputs and branch
+        env:
+          N: ${{ inputs.n }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$N" in ''|*[!0-9]*|0*) echo "::error::n must be a positive integer without leading zeros."; exit 1;; esac
+          case "$REF_NAME" in bt/*) ;; *) echo "::error::Run this workflow from a bt/* branch (got $REF_NAME)."; exit 1;; esac
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Ancestor check (bt/* queue must descend from an upstream release tag)
+        run: |
+          set -euo pipefail
+          UP=$(node -p "require('./package.json').version.replace(/-bt\.\d+$/, '')")
+          git rev-parse -q --verify "refs/tags/v$UP" >/dev/null || { echo "::error::Tag v$UP is not in this checkout."; exit 1; }
+          git merge-base --is-ancestor "v$UP" "$GITHUB_SHA" || { echo "::error::$GITHUB_SHA does not descend from v$UP."; exit 1; }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "18.20.4"
+          package-manager-cache: false
+      - run: npm ci
+      - name: Stamp the version (<upstream>-bt.<N>)
+        env:
+          N: ${{ inputs.n }}
+        run: node scripts/bt-stamp.js "$N"
+      - run: npm run build
+      - run: npm test
+      - name: Pack the tarball
+        id: pack
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          case "$VERSION" in *-bt.*) ;; *) echo "::error::Refusing to release $VERSION: not a -bt.N version."; exit 1;; esac
+          mkdir -p "$RUNNER_TEMP/out"
+          npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/out" > "$RUNNER_TEMP/pack.json"
+          node -e '
+            const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0];
+            const o = require("fs").appendFileSync;
+            o(process.env.GITHUB_OUTPUT, "integrity=" + p.integrity + "\n");
+            o(process.env.GITHUB_OUTPUT, "tarball=" + p.filename + "\n");
+            o(process.env.GITHUB_OUTPUT, "version=" + p.version + "\n");
+            if (p.name !== "@ramonlobo/rooibos-roku") { console.error("Unexpected package name " + p.name); process.exit(1); }
+          ' "$RUNNER_TEMP/pack.json"
+      - name: Upload the tarball (the exact bytes that will be staged)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tarball-${{ steps.pack.outputs.version }}
+          path: ${{ runner.temp }}/out/${{ steps.pack.outputs.tarball }}
+          retention-days: 1
+          if-no-files-found: error
+
+  # Runs NO repository code: no checkout, no npm ci. Stages the exact tarball verify built.
+  stage:
+    name: stage on npm
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC for the npm trusted publisher and provenance
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Ensure npm supports staged publishing (>= 11.15.0)
+        run: |
+          set -euo pipefail
+          echo "npm $(npm -v), node $(node -v)"
+          if ! node -e 'const [a,b]=process.argv[1].split(".").map(Number);process.exit(a>11||(a===11&&b>=15)?0:1)' "$(npm -v)"; then
+            WANT="sha512-5Cf+jE+XctbhH/zjOOqXC+ity7eec/Tkk4Ql38tf6w+1htp2wYPHmE4c1R1Es3DY227Ac14+SLrlYJwkBicbTg=="
+            [ "$(npm view npm@11.21.3 dist.integrity)" = "$WANT" ]
+            npm install -g npm@11.21.3
+            echo "npm now $(npm -v)"
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tarball-${{ needs.verify.outputs.version }}
+          path: ${{ runner.temp }}/pkg
+      - name: Verify the tarball integrity and version
+        env:
+          EXPECTED: ${{ needs.verify.outputs.integrity }}
+          TARBALL: ${{ needs.verify.outputs.tarball }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          PKG_DIR: ${{ runner.temp }}/pkg
+        run: |
+          set -euo pipefail
+          case "$VERSION" in *-bt.*) ;; *) echo "::error::Refusing $VERSION: not a -bt.N version."; exit 1;; esac
+          [ -n "$EXPECTED" ] || { echo "::error::verify reported no integrity."; exit 1; }
+          ACTUAL=$(node -e 'const c=require("crypto"),fs=require("fs");process.stdout.write("sha512-"+c.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"))' "$PKG_DIR/$TARBALL")
+          [ "$ACTUAL" = "$EXPECTED" ] || { echo "::error::Tarball integrity differs from the one verify built."; exit 1; }
+      - name: Stage the package (not live until approved)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} # stage-only scope
+          VERSION: ${{ needs.verify.outputs.version }}
+          TARBALL: ${{ needs.verify.outputs.tarball }}
+          PKG_DIR: ${{ runner.temp }}/pkg
+        run: |
+          set -euo pipefail
+          npm stage publish "$PKG_DIR/$TARBALL" --ignore-scripts --access public --tag next --provenance 2>&1 | tee "$RUNNER_TEMP/stage.log"
+          {
+            echo "## @ramonlobo/rooibos-roku ${VERSION} is STAGED, not published (dist-tag: next)"
+            echo
+            echo "Approve on npmjs.com (Staged Packages, 2FA) or \`npm stage approve <stage-id>\`. Reject to discard."
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/stage.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Owner-run after a green stage: creates v<version> once on the staged commit and never moves it.
+  tag:
+    name: tag
+    needs: [verify, stage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Create the tag (refuse if it exists)
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          case "$VERSION" in *-bt.*) ;; *) echo "::error::Refusing to tag $VERSION."; exit 1;; esac
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag v$VERSION already exists; tags are never moved."
+            exit 1
+          fi
+          git tag "v$VERSION" "$GITHUB_SHA"
+          git push origin "refs/tags/v$VERSION"

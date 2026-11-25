@@ -1,8 +1,12 @@
 {
-    "name": "rooibos-roku",
+    "name": "@ramonlobo/rooibos-roku",
     "version": "5.17.0",
     "description": "simple, flexible, fun brightscript test framework for roku scenegraph apps - roku brighterscript plugin",
+    "publishConfig": {
+        "access": "public"
+    },
     "scripts": {
+        "prepublishOnly": "npm run build",
         "preversion": "npm run build && npm run lint && npm run test",
         "clean": "node -e \"require('fs').rmSync('./dist', {recursive: true, force: true})\"",
         "compile": "npm run clean && tsc -p .",
@@ -79,12 +83,12 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/rokucommunity/rooibos"
+        "url": "https://github.com/Ramon-Lobo/rooibos"
     },
     "bugs": {
-        "url": "https://github.com/rokucommunity/rooibos/issues"
+        "url": "https://github.com/Ramon-Lobo/rooibos/issues"
     },
-    "homepage": "https://github.com/rokucommunity/rooibos#readme",
+    "homepage": "https://github.com/Ramon-Lobo/rooibos#readme",
     "keywords": [
         "brightscript",
         "scenegraph",
