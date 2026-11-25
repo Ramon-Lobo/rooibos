@@ -10,5 +10,5 @@ t('behind', () => assert.strictEqual(w.evaluate({ baseTag: 'v2.7.1', newestTag: 
 t('new tag', () => { const r = w.evaluate({ baseTag: 'v2.7.1', newestTag: 'v2.8.0', forkMaster: 'a', upstreamMaster: 'a' }); assert.ok(r.newTag && !r.level); });
 t('diverged', () => assert.strictEqual(w.evaluate({ baseTag: 'v2.7.1', newestTag: 'v2.7.1', forkMaster: 'a', upstreamMaster: 'b', masterCompare: { status: 'diverged', ahead_by: 2, behind_by: 3 } }).master, 'diverged'));
 t('unknown compare', () => assert.strictEqual(w.evaluate({ forkMaster: 'a', upstreamMaster: 'b', masterCompare: null }).master, 'unknown'));
-t('body mentions state', () => assert.match(w.renderBody({ baseTag: 'v1.0.0', newestTag: 'v1.1.0', forkMaster: 'a', upstreamMaster: 'b', masterCompare: { status: 'ahead', ahead_by: 4, behind_by: 0 } }, { newTag: true, master: 'behind', level: false }, 'o/r'), /new tag: yes/));
+t('body mentions state', () => assert.match(w.renderBody({ baseTag: 'v1.0.0', newestTag: 'v1.1.0', forkMaster: 'a', upstreamMaster: 'b', masterCompare: { status: 'ahead', ahead_by: 4, behind_by: 0 } }, { newTag: true, master: 'behind', level: false }, 'o/r', 'me/fork'), /new tag: yes[\s\S]*releases\/tag\/v1\.1\.0[\s\S]*gh repo sync me\/fork --branch master/));
 console.log(n + ' passed');
