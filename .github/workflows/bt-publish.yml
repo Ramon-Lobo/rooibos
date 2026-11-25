@@ -82,6 +82,25 @@ jobs:
         env:
           N: ${{ inputs.n }}
         run: node scripts/bt-stamp.js "$N"
+      - name: Check the version is not already on npm (fail closed)
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./package.json').version")
+          case "$VERSION" in *-bt.*) ;; *) echo "::error::Refusing $VERSION: not a -bt.N version."; exit 1;; esac
+          # Only a registry 404 means "not published". Any other error stops the run.
+          set +e
+          VIEW=$(npm view "@ramonlobo/rooibos-roku@$VERSION" version 2>&1)
+          VIEW_RC=$?
+          set -e
+          if [ "$VIEW_RC" -eq 0 ] && [ -n "$VIEW" ]; then
+            echo "::error::@ramonlobo/rooibos-roku@$VERSION is already on npm. Versions cannot be reused; use the next N."
+            exit 1
+          elif printf '%s' "$VIEW" | grep -q 'E404'; then
+            echo "@ramonlobo/rooibos-roku@$VERSION is not on npm yet."
+          else
+            echo "::error::Could not tell whether $VERSION is on npm (not a 404): $VIEW"
+            exit 1
+          fi
       - run: npm run build
       - run: npm test
       - name: Pack the tarball
@@ -108,7 +127,12 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # Runs NO repository code: no checkout, no npm ci. Stages the exact tarball verify built.
+  # Runs NO repository code: no checkout, no npm ci, no scripts from the repo. It downloads the tarball verify built,
+  # checks its sha512 integrity against verify's output with an inline check, and stages that exact file. A compromised
+  # build dependency can therefore not reach the OIDC token or NPM_TOKEN via PATH, .npmrc or the toolcache here; it can
+  # still put malicious content into the tarball itself (it runs in verify), and a workflow edited on a pushed branch
+  # could skip these checks. Only the environment branch rule and the owner's 2FA review of the staged package
+  # control that (see THREAT MODEL above).
   stage:
     name: stage on npm
     needs: verify
@@ -123,7 +147,7 @@ jobs:
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
-          package-manager-cache: false
+          package-manager-cache: false # never cache in a release build
       - name: Ensure npm supports staged publishing (>= 11.15.0)
         run: |
           set -euo pipefail
@@ -171,12 +195,31 @@ jobs:
           PKG_DIR: ${{ runner.temp }}/pkg
         run: |
           set -euo pipefail
+          # Stage the verified tarball itself. npm tries OIDC first, then NODE_AUTH_TOKEN.
+          # --tag next: a -bt.N prerelease is never staged under `latest`. The tag is immutable once staged; to change
+          # it, reject and re-stage.
+          # --provenance: signs a statement for the tarball's digest using this run's OIDC identity.
           npm stage publish "$PKG_DIR/$TARBALL" --ignore-scripts --access public --tag next --provenance 2>&1 | tee "$RUNNER_TEMP/stage.log"
+          # npm prints: + <name>@X (staged with id <id>)
+          STAGE_ID=$(grep -Eo 'staged with id [A-Za-z0-9_-]+' "$RUNNER_TEMP/stage.log" | head -n1 | awk '{print $NF}' || true)
           {
-            echo "## @ramonlobo/rooibos-roku ${VERSION} is STAGED, not published (dist-tag: next)"
+            echo "## @ramonlobo/rooibos-roku ${VERSION} is STAGED, not published"
             echo
-            echo "Approve on npmjs.com (Staged Packages, 2FA) or \`npm stage approve <stage-id>\`. Reject to discard."
+            echo "Dist-tag when approved: \`next\`"
             echo
+            if [ -n "$STAGE_ID" ]; then
+              echo "Stage id: \`${STAGE_ID}\`"
+            else
+              echo "Stage id: not found in the CLI output below. Find it on npmjs.com (Staged Packages tab) or with \`npm stage list @ramonlobo/rooibos-roku\`."
+            fi
+            echo
+            echo "To make it live (2FA required, nothing publishes until you do this):"
+            echo "1. Open npmjs.com, Staged Packages tab, review ${VERSION}, click **Approve**; or"
+            echo "2. Run \`npm stage approve <stage-id>\` from a logged-in terminal."
+            echo
+            echo "To discard it: **Reject** on npmjs.com or \`npm stage reject <stage-id>\`. Run the tag job (create_tag=true) only after approving."
+            echo
+            echo "CLI output:"
             echo '```'
             cat "$RUNNER_TEMP/stage.log"
             echo '```'
