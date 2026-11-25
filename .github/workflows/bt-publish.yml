@@ -7,9 +7,24 @@ name: bt-publish
 # approves the staged version on npmjs.com (2FA) or with `npm stage approve <stage-id>`. This file must never call
 # `npm publish`. Dist-tag is always `next`, never `latest`.
 #
-# `tag` (v<upstream>-bt.<N>, created once after a green stage, never moved) is part of the pipeline but is run by the
-# owner only. Matches the design of the brighttest release pipeline (stage-only, #372 head 1d94db1); a rebase onto
-# the merged form of that pipeline is pending.
+# `tag` (v<upstream>-bt.<N>, created once, never moved) runs only when the dispatch sets create_tag=true (default
+# false). Set it only after the owner has approved the staged package. A dispatch with create_tag=false never tags.
+# Mirrors the stage-only design of the brighttest release pipeline (roku-test PR #372 as of 69e525b); rebase onto it
+# after it merges.
+#
+# THREAT MODEL. This file runs from whatever branch it is dispatched on, so anyone who can push a branch can dispatch
+# a modified copy that drops the checks in `verify`; the npm-release environment would still issue OIDC for any branch
+# it allows. The checks here (bt/* branch, ancestor of the upstream tag, -bt.N only, tests, tarball name and integrity,
+# not already on npm) guard honest mistakes, not an attacker. The real controls are the environment branch rule and
+# the owner's 2FA review of the staged package before approving it. The token and the trusted publisher can only
+# stage, and the package disallows bypass-2FA tokens, so this file must never call `npm publish`.
+#
+# ONE-TIME OWNER SETTINGS (not in this file):
+#   1. GitHub environment `npm-release`: deployment branches limited to the rule `bt/*`; secret NPM_TOKEN (stage-only).
+#   2. npm trusted publisher for @ramonlobo/rooibos-roku: workflow `bt-publish.yml`, environment `npm-release`.
+#   3. The upstream release tag (v5.17.0) mirrored into this fork (read-only fetch from upstream, push to the fork);
+#      the ancestor check in `verify` needs it and fails closed without it.
+#   4. Disable the upstream-owned workflows in the fork's Actions settings.
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +32,10 @@ on:
         description: "bt build number N (version becomes <upstream>-bt.N)"
         required: true
         type: string
+      create_tag:
+        description: "Also create the v<version> tag after a green stage. Only set after the owner approved the staged package."
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -128,6 +147,19 @@ jobs:
         run: |
           set -euo pipefail
           case "$VERSION" in *-bt.*) ;; *) echo "::error::Refusing $VERSION: not a -bt.N version."; exit 1;; esac
+          [ "$TARBALL" = "ramonlobo-rooibos-roku-${VERSION}.tgz" ] || { echo "::error::Unexpected tarball name $TARBALL for $VERSION."; exit 1; }
+          # Fail closed: only a registry 404 means "not published".
+          set +e
+          VIEW=$(npm view "@ramonlobo/rooibos-roku@$VERSION" version 2>&1)
+          VIEW_RC=$?
+          set -e
+          if [ "$VIEW_RC" -eq 0 ] && [ -n "$VIEW" ]; then
+            echo "::error::@ramonlobo/rooibos-roku@$VERSION is already on npm; versions cannot be reused."
+            exit 1
+          elif ! printf '%s' "$VIEW" | grep -q 'E404'; then
+            echo "::error::Could not tell whether $VERSION is on npm (not a 404): $VIEW"
+            exit 1
+          fi
           [ -n "$EXPECTED" ] || { echo "::error::verify reported no integrity."; exit 1; }
           ACTUAL=$(node -e 'const c=require("crypto"),fs=require("fs");process.stdout.write("sha512-"+c.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"))' "$PKG_DIR/$TARBALL")
           [ "$ACTUAL" = "$EXPECTED" ] || { echo "::error::Tarball integrity differs from the one verify built."; exit 1; }
@@ -150,10 +182,12 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Owner-run after a green stage: creates v<version> once on the staged commit and never moves it.
+  # Only when create_tag=true, and only after the owner approves the staged package: creates v<version> once on the
+  # staged commit and never moves it.
   tag:
     name: tag
     needs: [verify, stage]
+    if: inputs.create_tag
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
