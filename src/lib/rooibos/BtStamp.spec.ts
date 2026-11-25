@@ -5,7 +5,6 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 
 const script = path.resolve(__dirname, '../../../scripts/bt-stamp.js');
-const realPkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf8'));
 
 describe('scripts/bt-stamp.js', function () {
     this.timeout(30000);
@@ -97,6 +96,8 @@ describe('scripts/bt-stamp.js', function () {
         const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
         execFileSync('git', ['clone', '-q', '--no-hardlinks', repo, clone], { stdio: 'ignore' });
         execFileSync('git', ['checkout', '-q', '-b', 'bt/scratch', head], { cwd: clone, stdio: 'ignore' });
+        // the committed package.json, not the working tree: the release workflow stamps the tree before `npm test`
+        const realPkg = JSON.parse(execFileSync('git', ['show', 'HEAD:package.json'], { cwd: repo, encoding: 'utf8' }));
         expect(realPkg.dependencies['roku-deploy']).to.equal('^4.0.0-alpha.9');
         execFileSync('node', [script, '1'], { cwd: clone, stdio: 'ignore' });
         const out = JSON.parse(fs.readFileSync(path.join(clone, 'package.json'), 'utf8'));
