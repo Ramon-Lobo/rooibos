@@ -1,0 +1,14 @@
+'use strict';
+const assert = require('assert');
+const w = require('./bt-upstream-watch.js');
+let n = 0;
+const t = (name, fn) => { fn(); n++; console.log('ok', name); };
+t('newest stable ignores prereleases', () => assert.strictEqual(w.newestStableTag(['v2.7.1', 'v2.10.0', 'v3.0.0-alpha.1', 'x']), 'v2.10.0'));
+t('base tag from branch', () => { assert.strictEqual(w.baseTagFromBranch('bt/2.7.1'), 'v2.7.1'); assert.strictEqual(w.baseTagFromBranch('bt/5.17.0-guards'), 'v5.17.0'); assert.strictEqual(w.baseTagFromBranch('main'), null); });
+t('level', () => assert.deepStrictEqual(w.evaluate({ baseTag: 'v2.7.1', newestTag: 'v2.7.1', forkMaster: 'a', upstreamMaster: 'a' }), { newTag: false, master: 'identical', level: true }));
+t('behind', () => assert.strictEqual(w.evaluate({ baseTag: 'v2.7.1', newestTag: 'v2.7.1', forkMaster: 'a', upstreamMaster: 'b', masterCompare: { status: 'ahead', ahead_by: 4, behind_by: 0 } }).master, 'behind'));
+t('new tag', () => { const r = w.evaluate({ baseTag: 'v2.7.1', newestTag: 'v2.8.0', forkMaster: 'a', upstreamMaster: 'a' }); assert.ok(r.newTag && !r.level); });
+t('diverged', () => assert.strictEqual(w.evaluate({ baseTag: 'v2.7.1', newestTag: 'v2.7.1', forkMaster: 'a', upstreamMaster: 'b', masterCompare: { status: 'diverged', ahead_by: 2, behind_by: 3 } }).master, 'diverged'));
+t('unknown compare', () => assert.strictEqual(w.evaluate({ forkMaster: 'a', upstreamMaster: 'b', masterCompare: null }).master, 'unknown'));
+t('body mentions state', () => assert.match(w.renderBody({ baseTag: 'v1.0.0', newestTag: 'v1.1.0', forkMaster: 'a', upstreamMaster: 'b', masterCompare: { status: 'ahead', ahead_by: 4, behind_by: 0 } }, { newTag: true, master: 'behind', level: false }, 'o/r'), /new tag: yes/));
+console.log(n + ' passed');
