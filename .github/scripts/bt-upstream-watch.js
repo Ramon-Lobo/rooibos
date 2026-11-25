@@ -47,7 +47,7 @@ function evaluate(facts) {
     return { newTag, master, level };
 }
 
-function renderBody(facts, result, upstream) {
+function renderBody(facts, result, upstream, fork) {
     const cc = facts.masterCompare || {};
     return [
         `Upstream: ${upstream}`,
@@ -55,6 +55,8 @@ function renderBody(facts, result, upstream) {
         `Fork master: ${facts.forkMaster || 'unknown'}; upstream master: ${facts.upstreamMaster || 'unknown'}; state: ${result.master}`,
         `Commits fork master is behind upstream: ${cc.ahead_by ?? 'n/a'}; ahead: ${cc.behind_by ?? 'n/a'}`,
         `Overall: ${result.level ? 'level' : 'action needed (owner syncs master, developer rebases the bt branch)'}`,
+        `Release notes: ${facts.newestTag ? `https://github.com/${upstream}/releases/tag/${facts.newestTag}` : `https://github.com/${upstream}/releases`}`,
+        `Owner command to sync master (manual): gh repo sync ${fork} --branch master`,
         '',
         'Updated by bt-upstream-watch. Read-only against upstream.',
     ].join('\n');
@@ -85,7 +87,7 @@ async function run({ github, context, core }, upstream) {
         ? await upstreamGet(`/repos/${upstream}/compare/${forkMaster}...${upstreamMaster}`) : null;
     const facts = { baseTag: baseTagFromBranch(branch), newestTag: newestStableTag(tags.map((t) => t.name)), forkMaster, upstreamMaster, masterCompare };
     const result = evaluate(facts);
-    const body = renderBody(facts, result, upstream);
+    const body = renderBody(facts, result, upstream, `${owner}/${repo}`);
     const issues = await github.rest.issues.listForRepo({ owner, repo, state: 'all', per_page: 100 });
     const existing = issues.data.find((i) => !i.pull_request && i.title === TITLE);
     const state = result.level ? 'closed' : 'open';
