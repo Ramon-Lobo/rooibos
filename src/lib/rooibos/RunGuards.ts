@@ -29,12 +29,22 @@ const APP_EXIT_FAILURE = '[rooibos] the app exited without a [Rooibos Result] li
 const PROMPT_REGEX = /Brightscript Debugger>|can't continue/i;
 const RESULT_REGEX = /\[Rooibos Result\]: (FAIL|PASS)/;
 //periodic memory/cpu heartbeat some firmware prints about once a second, e.g. `channel: mem=19540KiB{...},%cpu=0{...}`
-const HEARTBEAT_REGEX = /^channel: mem=/;
 
 /** True when every non-blank line of the chunk is a memory heartbeat (so the chunk is not proof of progress). */
 function isHeartbeatOnly(output: string): boolean {
     const lines = output.split(/\r?\n/).filter(line => line.trim() !== '');
-    return lines.length > 0 && lines.every(line => HEARTBEAT_REGEX.test(line));
+    return lines.length > 0 && lines.every(line => line.startsWith('channel: mem='));
+}
+
+/** Returns an error message when a numeric guard flag is given but is not a usable number (e.g. NaN from `--idle-timeout abc`). */
+export function validateGuardNumbers(argv: { 'app-exit-grace'?: number; 'idle-timeout'?: number }): string | undefined {
+    for (const name of ['app-exit-grace', 'idle-timeout'] as const) {
+        const value = argv[name];
+        if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
+            return `--${name} must be a finite number >= 0 (got ${value})`;
+        }
+    }
+    return undefined;
 }
 
 export class RunGuards {
@@ -73,6 +83,10 @@ export class RunGuards {
         if (!isHeartbeatOnly(output)) {
             this.bumpIdle();
         }
+        //the app is printing after the remembered exit, so that exit was not the end of this run
+        if (this.pendingExit && !isHeartbeatOnly(output)) {
+            this.pendingExit = false;
+        }
         if (RESULT_REGEX.test(output)) {
             this.resultSeen = true;
         }
@@ -90,7 +104,10 @@ export class RunGuards {
      */
     public onAppExit(): AppExitDecision {
         if (!this.appExitArmed) {
-            this.pendingExit = true;
+            //an exit before the package was deployed is the teardown of the previous channel, not ours: ignore it
+            if (this.deployDone) {
+                this.pendingExit = true;
+            }
             return { exit: false };
         }
         if (this.options.appExitGraceMs !== undefined && !this.resultSeen) {
@@ -118,7 +135,7 @@ export class RunGuards {
         this.fireStuck('[rooibos] --continue-on-runtime-error: the debugger cannot continue after the runtime error (it only continues with rooibos catchCrashes: true) - finishing the run');
     }
 
-    /** The app suspended at the debugger. With a guard flag on, never wait on it silently. */
+    /** The app suspended at the debugger. With a guard flag on, never wait on it silently: if no real output follows within 5 s (resumeWaitMs) the run ends with exit 1. */
     public onSuspend() {
         const flagOn = this.options.continueOnRuntimeError || this.options.appExitGraceMs !== undefined || (this.options.idleTimeoutSec ?? 0) > 0;
         if (flagOn && !this.stuckTimer) {

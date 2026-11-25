@@ -12,7 +12,7 @@ import type { CoverageMap as CoverageModelJson } from './lib/rooibos/CodeCoverag
 import { resolveCliRooibosConfig } from './lib/rooibos/RooibosConfig';
 import { resolveCliDevice } from './lib/rooibos/resolveCliDevice';
 import type { ResolvedCliDevice } from './lib/rooibos/resolveCliDevice';
-import { RunGuards } from './lib/rooibos/RunGuards';
+import { RunGuards, validateGuardNumbers } from './lib/rooibos/RunGuards';
 import { loadCoverageModel, writeCoverageReportsFromCounts } from './lib/rooibos/CoverageReporter';
 
 /**
@@ -63,6 +63,10 @@ let options = yargs
     .option('continue-on-runtime-error', { type: 'boolean', default: false, description: 'Opt in to keeping the run going after a device runtime error instead of exiting at the first one. LIMIT: this only works when the test sets rooibos catchCrashes: true. With catchCrashes: false the device cannot resume a faulted thread, so the run ends with exit code 1 and "the debugger cannot continue after the runtime error (it only continues with rooibos catchCrashes: true)". The run is always reported as failed (exit code 1) once a runtime error was seen. Off by default.' })
     .option('build', { type: 'boolean', default: true, description: 'Pass --no-build to skip the internal bsc build and deploy an existing staging directory (from --staging-dir or the bsconfig). Assumes it was built with the rooibos plugin so coverage helpers are present.' })
     .check((argv) => {
+        const guardError = validateGuardNumbers(argv as any);
+        if (guardError) {
+            return new Error(guardError);
+        }
         password = argv.password ?? process.env.ROKU_PASSWORD;
         if (!password) {
             return new Error('You must provide a password. (--password, or ROKU_PASSWORD in .env)');

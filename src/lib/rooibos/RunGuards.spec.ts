@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { RunGuards } from './RunGuards';
+import { RunGuards, validateGuardNumbers } from './RunGuards';
 
 const wait = (ms: number) => new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
@@ -104,6 +104,50 @@ describe('RunGuards', () => {
             guards.deployed();
             await wait(60);
             expect(failures).to.eql([]);
+        });
+        it('teardown exit, then output past the window, then PASS: no failure', async () => {
+            const failures: string[] = [];
+            guards = new RunGuards({ appExitGraceMs: 30, onDeferredExit: f => failures.push(f) });
+            guards.deployed();
+            expect(guards.onAppExit().exit).to.be.false;
+            guards.onOutput('some suite output');
+            await wait(80);
+            guards.onOutput('[Rooibos Result]: PASS');
+            expect(failures).to.eql([]);
+            expect(guards.onAppExit()).to.eql({ exit: true });
+        });
+
+        it('heartbeat-only output does not clear a remembered exit', async () => {
+            const failures: string[] = [];
+            guards = new RunGuards({ appExitGraceMs: 30, onDeferredExit: f => failures.push(f) });
+            guards.deployed();
+            guards.onAppExit();
+            guards.onOutput('channel: mem=19540KiB{anon=1},%cpu=0{user=0}\n');
+            await wait(80);
+            expect(failures).to.have.length(1);
+        });
+
+        it('ignores an app-exit seen before deployed()', async () => {
+            const failures: string[] = [];
+            guards = new RunGuards({ appExitGraceMs: 30, onDeferredExit: f => failures.push(f) });
+            expect(guards.onAppExit().exit).to.be.false;
+            guards.deployed();
+            await wait(80);
+            expect(failures).to.eql([]);
+        });
+
+    });
+
+    describe('numeric flag validation', () => {
+        it('accepts undefined and finite numbers', () => {
+            expect(validateGuardNumbers({})).to.be.undefined;
+            expect(validateGuardNumbers({ 'app-exit-grace': 0, 'idle-timeout': 30 })).to.be.undefined;
+        });
+
+        it('rejects NaN, Infinity and negatives', () => {
+            expect(validateGuardNumbers({ 'idle-timeout': NaN })).to.include('--idle-timeout');
+            expect(validateGuardNumbers({ 'app-exit-grace': Infinity })).to.include('--app-exit-grace');
+            expect(validateGuardNumbers({ 'app-exit-grace': -1 })).to.include('--app-exit-grace');
         });
     });
 
