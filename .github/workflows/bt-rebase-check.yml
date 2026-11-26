@@ -1,0 +1,104 @@
+name: bt-rebase-check
+
+# Weekly check that the patch queue (<base_tag>..<queue_ref>) still applies onto upstream.
+#   (a) newest upstream stable tag: on a clean apply onto a NEW tag, build (npm ci, npm run build), run the upstream
+#       tests (they include our patch tests), npm pack, upload the tarball for 7 days;
+#   (b) upstream master: early warning only, never fails the run.
+# The result is one comment on the rolling bt-sync issue (never a second issue). Read-only against upstream; no push,
+# no branch, no PR. The cron runs 26 minutes after bt-upstream-watch (06:17 Monday).
+# Dispatch inputs are optional: empty means the queue is the branch the run starts from, the base tag is derived from
+# it, and the target is the newest upstream stable tag. Third-party actions are pinned by full commit SHA.
+on:
+  schedule:
+    - cron: '43 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: Upstream ref (tag or branch) to apply the queue onto (empty means the newest stable tag)
+        required: false
+        default: ''
+      base_tag:
+        description: Upstream tag the queue was built on (empty means derived from queue_ref)
+        required: false
+        default: ''
+      queue_ref:
+        description: Branch holding the patch queue in this repo (empty means the branch this run starts from)
+        required: false
+        default: ''
+
+permissions: {}
+
+concurrency:
+  group: bt-rebase-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # every branch and tag: the queue and the base tag are read from history
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "18.20.4"
+          package-manager-cache: false
+      - name: Apply the queue, build and pack on a new tag
+        env:
+          UPSTREAM_URL: https://github.com/rokucommunity/rooibos.git
+          UPSTREAM_REF: ${{ inputs.upstream_ref }}
+          BASE_TAG: ${{ inputs.base_tag }}
+          QUEUE_REF: ${{ inputs.queue_ref || github.ref_name }}
+          OUT_DIR: ${{ runner.temp }}/bt-rebase-check
+          STEP_TIMEOUT_S: "1500"
+          # Single package: install, build, then the mocha suite (upstream's tests plus our patch tests); npm pack follows.
+          BUILD_CMDS: |
+            npm ci
+            npm run build
+            npm test
+        run: node .github/scripts/bt-rebase-check.js
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bt-rebase-result
+          path: ${{ runner.temp }}/bt-rebase-check/result.json
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Upload the patched tarball
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bt-rebase-tarball
+          path: ${{ runner.temp }}/bt-rebase-check/artifact/*.tgz
+          retention-days: 7
+          if-no-files-found: ignore
+
+  report:
+    needs: check
+    if: ${{ always() && needs.check.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: bt-rebase-result
+          path: ${{ runner.temp }}/result
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          RESULT_PATH: ${{ runner.temp }}/result/result.json
+        with:
+          script: |
+            const r = require('./.github/scripts/bt-rebase-report.js');
+            await r.run({ github, context, core }, process.env.RESULT_PATH);
